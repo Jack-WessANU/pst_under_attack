@@ -1,0 +1,185 @@
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("edgeR")
+BiocManager::install("limma")
+BiocManager::install("tximport")
+
+#importing the Salmon files
+library(edgeR)
+library(limma)
+library(tximport)
+
+## Hyperparasite attack conditions have had penx reads removed by aligning to the penx genome "10kb8QCanu". All Pst reads quantified by aligning to Ritas Pst 104E- genome
+hyperparasite_attack1 <-tximport("./input_data_salmon/pst_salmon_inpla_penx_removed1/quant.sf", type = c("salmon"), txIn = TRUE, txOut = TRUE, countsFromAbundance = c("lengthScaledTPM"),dropInfReps=TRUE)
+hyperparasite_attack2 <-tximport("./input_data_salmon/pst_salmon_inpla_penx_removed2/quant.sf", type = c("salmon"), txIn = TRUE, txOut = TRUE, countsFromAbundance = c("lengthScaledTPM"),dropInfReps=TRUE)
+hyperparasite_attack3 <-tximport("./input_data_salmon/pst_salmon_inpla_penx_removed3/quant.sf", type = c("salmon"), txIn = TRUE, txOut = TRUE, countsFromAbundance = c("lengthScaledTPM"),dropInfReps=TRUE)
+pst_alone_ungerminated_1 <-tximport("./input_data_salmon/pst_salmon_sp_days1/quant.sf", type = c("salmon"), txIn = TRUE, txOut = TRUE, countsFromAbundance = c("lengthScaledTPM"),dropInfReps=TRUE)
+pst_alone_ungerminated_2 <-tximport("./input_data_salmon/pst_salmon_sp_days2/quant.sf", type = c("salmon"), txIn = TRUE, txOut = TRUE, countsFromAbundance = c("lengthScaledTPM"),dropInfReps=TRUE)
+pst_alone_ungerminated_3 <-tximport("./input_data_salmon/pst_salmon_sp_days3/quant.sf", type = c("salmon"), txIn = TRUE, txOut = TRUE, countsFromAbundance = c("lengthScaledTPM"),dropInfReps=TRUE)
+pst_alone_day12_1 <-tximport("./input_data_salmon/pst_salmon_12days1/quant.sf", type = c("salmon"), txIn = TRUE, txOut = TRUE, countsFromAbundance = c("lengthScaledTPM"),dropInfReps=TRUE)
+pst_alone_day12_2 <-tximport("./input_data_salmon/pst_salmon_12days2/quant.sf", type = c("salmon"), txIn = TRUE, txOut = TRUE, countsFromAbundance = c("lengthScaledTPM"),dropInfReps=TRUE)
+pst_alone_day12_3 <-tximport("./input_data_salmon/pst_salmon_12days3/quant.sf", type = c("salmon"), txIn = TRUE, txOut = TRUE, countsFromAbundance = c("lengthScaledTPM"),dropInfReps=TRUE)
+
+#combining the Salmon count information into a single matrix
+countmatrix_hyp_against_day12<-data.frame(hyperparasite_attack1$counts, hyperparasite_attack2$counts, hyperparasite_attack3$counts, pst_alone_day12_1$counts, pst_alone_day12_2$counts, pst_alone_day12_3$counts)
+row.names(countmatrix_hyp_against_day12)<-row.names(hyperparasite_attack1$counts)
+plotMDS(countmatrix_hyp_against_day12)
+
+#import design matrix (generated seperately in excel)
+design_hyp_against_day12<-read.csv("./design_hyp_against_day12.csv")
+
+#filtering genes by expression
+dge_hyp_against_day12 <- DGEList(counts=countmatrix_hyp_against_day12)
+group_hyp_against_day12 <- as.factor(c("hyperparasite_attack","hyperparasite_attack","hyperparasite_attack","day12","day12","day12"))
+keep_hyp_against_day12 <- filterByExpr(dge_hyp_against_day12, group_hyp_against_day12=group_hyp_against_day12)
+dge_hyp_against_day12 <- dge_hyp_against_day12[keep_hyp_against_day12,,keep.lib.sizes=FALSE]
+
+#checking the results of filtering
+dim(dge_hyp_against_day12)
+dim(design_hyp_against_day12)
+
+#Use voom to determine weights for each gene to be passed to limma, voom normalises the data
+v_hyp_against_day12<-voom(dge_hyp_against_day12, design_hyp_against_day12, plot=TRUE, normalize="quantile")
+
+#fit linear model for each gene
+fit_hyp_against_day12 <- lmFit(v_hyp_against_day12,design_hyp_against_day12)
+
+#define the comparisons you want to examine
+contrast.matrix_hyp_against_day12 <- makeContrasts(hyperparasite_attack - day12, levels = design_hyp_against_day12)
+
+#estimate contrasts for each gene
+fit2_hyp_against_day12 <- contrasts.fit(fit_hyp_against_day12, contrast.matrix_hyp_against_day12)
+
+#Smoothing of standard error
+fit2_hyp_against_day12 <- eBayes(fit2_hyp_against_day12)
+
+#Generate results tables
+pst_hyperparasite_attack_vs_day12 <- topTable(fit2_hyp_against_day12,coef=1, number=Inf)
+
+#Export transcriptome profiles
+write.csv(pst_hyperparasite_attack_vs_day12, file = "./penx_removed_against_its_genome_limma_outputs/pst_hyperparasite_attack_vs_day12.csv")
+
+
+
+
+
+
+
+
+################################################# Now to do Hyperparasite attack vs Ungerminated spores ############################################################################
+
+
+
+
+
+
+
+
+#combining the Salmon count information into a single matrix
+countmatrix_hyp_against_ungerminated<-data.frame(hyperparasite_attack1$counts, hyperparasite_attack2$counts, hyperparasite_attack3$counts, pst_alone_ungerminated_1$counts, pst_alone_ungerminated_2$counts, pst_alone_ungerminated_3$counts)
+row.names(countmatrix_hyp_against_ungerminated)<-row.names(hyperparasite_attack1$counts)
+plotMDS(countmatrix_hyp_against_ungerminated)
+
+#import design matrix (generated seperately in excel)
+design_hyp_against_ungerminated<-read.csv("./design_hyp_against_ungerminated.csv")
+
+#filtering genes by expression
+dge_hyp_against_ungerminated <- DGEList(counts=countmatrix_hyp_against_ungerminated)
+group_hyp_against_ungerminated <- as.factor(c("hyperparasite_attack","hyperparasite_attack","hyperparasite_attack","ungerminated","ungerminated","ungerminated"))
+keep_hyp_against_ungerminated <- filterByExpr(dge_hyp_against_ungerminated, group_hyp_against_ungerminated=group_hyp_against_ungerminated)
+dge_hyp_against_ungerminated <- dge_hyp_against_ungerminated[keep_hyp_against_ungerminated,,keep.lib.sizes=FALSE]
+
+#checking the results of filtering
+dim(dge_hyp_against_ungerminated)
+dim(design_hyp_against_ungerminated)
+
+#Use voom to determine weights for each gene to be passed to limma, voom normalises the data
+v_hyp_against_ungerminated<-voom(dge_hyp_against_ungerminated, design_hyp_against_ungerminated, plot=TRUE, normalize="quantile")
+
+#fit linear model for each gene
+fit_hyp_against_ungerminated <- lmFit(v_hyp_against_ungerminated,design_hyp_against_ungerminated)
+
+#define the comparisons you want to examine
+contrast.matrix_hyp_against_ungerminated <- makeContrasts(hyperparasite_attack - ungerminated, levels = design_hyp_against_ungerminated)
+
+#estimate contrasts for each gene
+fit2_hyp_against_ungerminated <- contrasts.fit(fit_hyp_against_ungerminated, contrast.matrix_hyp_against_ungerminated)
+
+#Smoothing of standard error
+fit2_hyp_against_ungerminated <- eBayes(fit2_hyp_against_ungerminated)
+
+#Generate results tables
+pst_hyperparasite_against_ungerminated <- topTable(fit2_hyp_against_ungerminated,coef=1, number=Inf)
+
+#Export transcriptome profiles
+write.csv(pst_hyperparasite_against_ungerminated, file = "./penx_removed_against_its_genome_limma_outputs/pst_hyperparasite_attack_vs_ungerminated.csv")
+
+
+
+################################ Finally to do Pst in pustules vs ungerminated Pst ##########################
+
+
+
+countmatrix_day12_against_ungerminated<-data.frame(pst_alone_day12_1$counts, pst_alone_day12_2$counts, pst_alone_day12_3$counts, pst_alone_ungerminated_1$counts, pst_alone_ungerminated_2$counts, pst_alone_ungerminated_3$counts)
+row.names(countmatrix_day12_against_ungerminated)<-row.names(pst_alone_day12_1$counts)
+plotMDS(countmatrix_day12_against_ungerminated)
+
+#import design matrix (generated seperately in excel)
+design_day12_against_ungerminated<-read.csv("./design_day12_against_ungerminated.csv")
+
+#filtering genes by expression
+dge_day12_against_ungerminated <- DGEList(counts=countmatrix_day12_against_ungerminated)
+group_day12_against_ungerminated <- as.factor(c("day12","day12","day12","ungerminated","ungerminated","ungerminated"))
+keep_day12_against_ungerminated <- filterByExpr(dge_day12_against_ungerminated, group_day12_against_ungerminated=group_day12_against_ungerminated)
+dge_day12_against_ungerminated <- dge_day12_against_ungerminated[keep_day12_against_ungerminated,,keep.lib.sizes=FALSE]
+
+#checking the results of filtering
+dim(dge_day12_against_ungerminated)
+dim(design_day12_against_ungerminated)
+
+#Use voom to determine weights for each gene to be passed to limma, voom normalises the data
+v_day12_against_ungerminated<-voom(dge_day12_against_ungerminated, design_day12_against_ungerminated, plot=TRUE, normalize="quantile")
+
+#fit linear model for each gene
+fit_day12_against_ungerminated <- lmFit(v_day12_against_ungerminated,design_day12_against_ungerminated)
+
+#define the comparisons you want to examine
+contrast.matrix_day12_against_ungerminated <- makeContrasts(day12 - ungerminated, levels = design_day12_against_ungerminated)
+
+#estimate contrasts for each gene
+fit2_day12_against_ungerminated <- contrasts.fit(fit_day12_against_ungerminated, contrast.matrix_day12_against_ungerminated)
+
+#Smoothing of standard error
+fit2_day12_against_ungerminated <- eBayes(fit2_day12_against_ungerminated)
+
+#Generate results tables
+pst_day12_against_ungerminated <- topTable(fit2_day12_against_ungerminated,coef=1, number=Inf)
+
+#Export transcriptome profiles
+write.csv(pst_day12_against_ungerminated, file = "./penx_removed_against_its_genome_limma_outputs/pst_day12_vs_ungerminated.csv")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
