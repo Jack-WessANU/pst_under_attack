@@ -1,0 +1,467 @@
+
+install.packages("tidyverse")
+install.packages("lintr")
+install.packages("lattice")
+install.packages("DOSE")
+
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("topGO")
+BiocManager::install("Rgraphviz")
+
+library(DOSE)
+library(tidyverse)
+library(topGO)
+library(lintr)
+library(lattice)
+library(dplyr)
+library(Rgraphviz)
+
+# Loading Data
+# create GO background mapping
+# using dataframe "pst6.csv" with two columns, gene name and GO terms http://127.0.0.1:45391/graphics/0d893d81-4f7a-45c6-b176-0d6fad76b074.png
+gene_to_go_mapping <- readMappings(file = "pst7.csv", sep = ";", IDsep = ",")
+
+# get background gene list
+# using dataframe "pst_underattackbypenx_filtered_vs_day12.csv" with two columns, gene name and LFC value
+
+hyp_vs_day12 <-  read.csv("./penx_removed_against_its_genome_limma_outputs/pst_hyperparasite_attack_vs_day12.csv", header = TRUE)
+geneNames_hyp_vs_day12 <- hyp_vs_day12$Column1
+
+
+# select genes of interest
+# Basically this is subsetting down genes based on whether they are significantly upregulated, maybe go higher than 1 LFC but lets see
+myInterestingGenes_hyp_vs_day12 <- subset(hyp_vs_day12, adj.P.Val < 0.05 & logFC > 1)$Column1
+
+# create selection and gene list object
+geneList_hyp_vs_day12 <- factor(as.integer(geneNames_hyp_vs_day12 %in% myInterestingGenes_hyp_vs_day12)) 
+names(geneList_hyp_vs_day12) <- geneNames_hyp_vs_day12
+str(geneList_hyp_vs_day12)
+
+# create topgo object
+my_go_data_hyp_vs_day12 <- new("topGOdata",
+                  ontology    = "BP",
+                  allGenes    = geneList_hyp_vs_day12,
+                  annot       = annFUN.gene2GO,
+                  gene2GO     = gene_to_go_mapping,
+                  nodeSize    = 5) # nodesize is min number of genes in GO_term
+
+## Enrichment Tests
+# use fisher for gene set number enrichment (not using gene values)
+result_weight_fisher_hyp_vs_day12 <- runTest(object = my_go_data_hyp_vs_day12, algorithm = "weight01", statistic = "fisher") # result object
+
+# summarise results
+result_weight_output_hyp_vs_day12 <- GenTable(object = my_go_data_hyp_vs_day12, weight_fisher_hyp_vs_day12 = result_weight_fisher_hyp_vs_day12,
+                                 orderBy   = "weight_fisher_hyp_vs_day12",
+                                 topNodes  = length(score(result_weight_fisher_hyp_vs_day12)))
+
+# multiple testing correction (may not be necessary)
+result_weight_output_hyp_vs_day12$weight_fisher_adjusted_hyp_vs_day12 <- p.adjust(p = result_weight_output_hyp_vs_day12$weight_fisher_hyp_vs_day12, method = c("BH")) 
+
+# P-value distribution from Fisher test
+ggplot(result_weight_output_hyp_vs_day12, aes(x = as.numeric(weight_fisher_hyp_vs_day12))) + geom_histogram()
+
+# Create map of sig GO terms
+# Define output directory and file path
+output_dir <- "go_plots"
+output_file <- file.path(output_dir, "topGO_sig_nodes_hyp_vs_day12.png")
+
+# Create the directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# Save the base R plot using png()
+png(filename = output_file, width = 1200, height = 1000, res = 300)  # adjust size and resolution as needed
+
+# Plot with adjusted text size
+par(cex = 0.22)  # change font size
+showSigOfNodes(
+  my_go_data_hyp_vs_day12,
+  score(result_weight_fisher_hyp_vs_day12),
+  firstSigNodes = 5,
+  useInfo = 'def',
+  .NO.CHAR = 50
+)
+
+# Finish plotting to file
+dev.off()
+# Genes in GO term stored in topGO object
+GO_mapped_hyp_vs_day12 <- genesInTerm(my_go_data_hyp_vs_day12) 
+
+
+## Plotting genes in sig GO terms
+# get sig GO terms
+
+sig_terms_hyp_vs_day12 <- result_weight_output_hyp_vs_day12[as.numeric(result_weight_output_hyp_vs_day12$weight_fisher_hyp_vs_day12) < 0.05,] # or fisher adjusted values
+
+
+# Code to generate a dotplot of enriched GO terms, with Gene Ratio (meaning number of significant genes within an individual GO term) as the x axis and GO term as the y axis. The dot size is relative to the total number of significant genes in the term and its colour
+# reflects the significance of the term overall (Fisher test)
+theme_update(text = element_text(size=18))
+
+p <- ggplot(sig_terms_hyp_vs_day12, aes(x = Significant / Annotated, y = reorder(Term, Significant / Annotated))) +
+  geom_point(aes(size = Significant, color = weight_fisher_adjusted_hyp_vs_day12), binaxis = "y") +
+  xlim(0, 1.0) +
+  labs(
+    y = "GO term",
+    x = "Gene ratio",
+    size = "# Significant Genes",
+    colour = "Significance"
+  ) +
+  ggtitle("Under attack by PenX (filtered) vs day 12 Pst") +
+  theme(axis.text = element_text(size = 8))
+
+# Define output directory and file path
+output_dir <- "go_plots"
+output_file <- file.path(output_dir, "hyp_vs_day12_jacks_ratio_plot.png")
+
+# Create directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# Save the plot
+ggsave(filename = output_file, plot = p, width = 10, height = 8, dpi = 300)
+
+# get genes in sig go terms
+
+sig_genes_hyp_vs_day12 <- data.frame()
+for(go_term in sig_terms_hyp_vs_day12$GO.ID){
+  sig_gene_hyp_vs_day12 <- data.frame(gene = GO_mapped_hyp_vs_day12[go_term], GO.ID = go_term)
+  names(sig_gene_hyp_vs_day12)[1] <- "Column1"
+  sig_genes_hyp_vs_day12 <- rbind(sig_genes_hyp_vs_day12, sig_gene_hyp_vs_day12)
+}
+
+sig_terms_genes_hyp_vs_day12 <- right_join(sig_terms_hyp_vs_day12, sig_genes_hyp_vs_day12, by = "GO.ID") # merge genes with result object above
+
+# associate LFC with sig genes
+sig_LFC_hyp_vs_day12 <- right_join(hyp_vs_day12, sig_terms_genes_hyp_vs_day12, by = "Column1")
+
+# order by most sig GO term
+sig_LFC_hyp_vs_day12 <- sig_LFC_hyp_vs_day12[order(as.numeric(sig_LFC_hyp_vs_day12$weight_fisher_hyp_vs_day12)),]
+sig_LFC_hyp_vs_day12$Term <- factor(sig_LFC_hyp_vs_day12$Term , levels = rev(unique(sig_LFC_hyp_vs_day12$Term )))
+
+# plot LFC
+# use "GO.ID" if GO "Term" is not unique
+
+# Create the plot
+p <- ggplot(sig_LFC_hyp_vs_day12, aes(x = logFC, y = Term, fill = as.numeric(weight_fisher_hyp_vs_day12))) +
+  geom_violin() + 
+  theme_bw() + 
+  geom_vline(xintercept = 0, colour = "grey") +
+  scale_fill_gradient(low = "red", high = "white")
+
+# Define the output directory and filename
+output_dir <- "go_plots"
+output_file <- file.path(output_dir, "hyp_vs_day12_violin_plot.png")
+
+# Create the output directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# Save the plot
+ggsave(filename = output_file, plot = p, width = 10, height = 8, dpi = 300)
+
+
+
+
+###################################### Now do Pst under attack by PenX vs Pst as ungerminated spores ############################
+
+
+
+
+
+
+# using dataframe "pst6.csv" with two columns, gene name and GO terms http://127.0.0.1:45391/graphics/0d893d81-4f7a-45c6-b176-0d6fad76b074.png
+gene_to_go_mapping <- readMappings(file = "pst7.csv", sep = ";", IDsep = ",")
+
+# get background gene list
+# using dataframe "pst_underattackbypenx_filtered_vs_day12.csv" with two columns, gene name and LFC value
+
+hyp_vs_ungerminated <-  read.csv("./penx_removed_against_its_genome_limma_outputs/pst_hyperparasite_attack_vs_ungerminated.csv", header = TRUE)
+geneNames_hyp_vs_ungerminated <- hyp_vs_ungerminated$Column1
+
+
+# select genes of interest
+# Basically this is subsetting down genes based on whether they are significantly upregulated, maybe go higher than 1 LFC but lets see
+myInterestingGenes_hyp_vs_ungerminated <- subset(hyp_vs_ungerminated, adj.P.Val < 0.05 & logFC > 1)$Column1
+
+# create selection and gene list object
+geneList_hyp_vs_ungerminated <- factor(as.integer(geneNames_hyp_vs_ungerminated %in% myInterestingGenes_hyp_vs_ungerminated)) 
+names(geneList_hyp_vs_ungerminated) <- geneNames_hyp_vs_ungerminated
+str(geneList_hyp_vs_ungerminated)
+
+# create topgo object
+my_go_data_hyp_vs_ungerminated <- new("topGOdata",
+                               ontology    = "BP",
+                               allGenes    = geneList_hyp_vs_ungerminated,
+                               annot       = annFUN.gene2GO,
+                               gene2GO     = gene_to_go_mapping,
+                               nodeSize    = 5) # nodesize is min number of genes in GO_term
+
+## Enrichment Tests
+# use fisher for gene set number enrichment (not using gene values)
+result_weight_fisher_hyp_vs_ungerminated <- runTest(object = my_go_data_hyp_vs_ungerminated, algorithm = "weight01", statistic = "fisher") # result object
+
+# summarise results
+result_weight_output_hyp_vs_ungerminated <- GenTable(object = my_go_data_hyp_vs_ungerminated, weight_fisher_hyp_vs_ungerminated = result_weight_fisher_hyp_vs_ungerminated,
+                                              orderBy   = "weight_fisher_hyp_vs_ungerminated",
+                                              topNodes  = length(score(result_weight_fisher_hyp_vs_ungerminated)))
+
+# multiple testing correction (may not be necessary)
+result_weight_output_hyp_vs_ungerminated$weight_fisher_adjusted_hyp_vs_ungerminated <- p.adjust(p = result_weight_output_hyp_vs_ungerminated$weight_fisher_hyp_vs_ungerminated, method = c("BH")) 
+
+# P-value distribution from Fisher test
+ggplot(result_weight_output_hyp_vs_ungerminated, aes(x = as.numeric(weight_fisher_hyp_vs_ungerminated))) + geom_histogram()
+
+# Create map of sig GO terms
+# Define output directory and file path
+output_dir <- "go_plots"
+output_file <- file.path(output_dir, "topGO_sig_nodes_hyp_vs_ungerminated.png")
+
+# Create the directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# Save the base R plot using png()
+png(filename = output_file, width = 1200, height = 1000, res = 300)  # adjust size and resolution as needed
+
+# Plot with adjusted text size
+par(cex = 0.22)  # change font size
+showSigOfNodes(
+  my_go_data_hyp_vs_ungerminated,
+  score(result_weight_fisher_hyp_vs_ungerminated),
+  firstSigNodes = 5,
+  useInfo = 'def',
+  .NO.CHAR = 50
+)
+
+# Finish plotting to file
+dev.off()
+# Genes in GO term stored in topGO object
+GO_mapped_hyp_vs_ungerminated <- genesInTerm(my_go_data_hyp_vs_ungerminated) 
+
+## Plotting genes in sig GO terms
+# get sig GO terms
+
+sig_terms_hyp_vs_ungerminated <- result_weight_output_hyp_vs_ungerminated[as.numeric(result_weight_output_hyp_vs_ungerminated$weight_fisher_hyp_vs_ungerminated) < 0.05,] # or fisher adjusted values
+
+# Code to generate a dotplot of enriched GO terms, with Gene Ratio (meaning number of significant genes within an individual GO term) as the x axis and GO term as the y axis. The dot size is relative to the total number of significant genes in the term and its colour
+# reflects the significance of the term overall (Fisher test)
+theme_update(text = element_text(size=18))
+
+p <- ggplot(sig_terms_hyp_vs_ungerminated, aes(x = Significant / Annotated, y = reorder(Term, Significant / Annotated))) +
+  geom_point(aes(size = Significant, color = weight_fisher_adjusted_hyp_vs_ungerminated), binaxis = "y") +
+  xlim(0, 1.0) +
+  labs(
+    y = "GO term",
+    x = "Gene ratio",
+    size = "# Significant Genes",
+    colour = "Significance"
+  ) +
+  ggtitle("Under attack by PenX (filtered) vs Ungerminated Pst") +
+  theme(axis.text = element_text(size = 8))
+
+# Define output directory and file path
+output_dir <- "go_plots"
+output_file <- file.path(output_dir, "hyp_vs_ungerminated_jacks_ratio_plot.png")
+
+# Create directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# Save the plot
+ggsave(filename = output_file, plot = p, width = 10, height = 8, dpi = 300)
+
+# get genes in sig go terms
+
+sig_genes_hyp_vs_ungerminated <- data.frame()
+for(go_term in sig_terms_hyp_vs_ungerminated$GO.ID){
+  sig_gene_hyp_vs_ungerminated <- data.frame(gene = GO_mapped_hyp_vs_ungerminated[go_term], GO.ID = go_term)
+  names(sig_gene_hyp_vs_ungerminated)[1] <- "Column1"
+  sig_genes_hyp_vs_ungerminated <- rbind(sig_genes_hyp_vs_ungerminated, sig_gene_hyp_vs_ungerminated)
+}
+
+sig_terms_genes_hyp_vs_ungerminated <- right_join(sig_terms_hyp_vs_ungerminated, sig_genes_hyp_vs_ungerminated, by = "GO.ID") # merge genes with result object above
+
+# associate LFC with sig genes
+sig_LFC_hyp_vs_ungerminated <- right_join(hyp_vs_ungerminated, sig_terms_genes_hyp_vs_ungerminated, by = "Column1")
+
+# order by most sig GO term
+sig_LFC_hyp_vs_ungerminated <- sig_LFC_hyp_vs_ungerminated[order(as.numeric(sig_LFC_hyp_vs_ungerminated$weight_fisher_hyp_vs_ungerminated)),]
+sig_LFC_hyp_vs_ungerminated$Term <- factor(sig_LFC_hyp_vs_ungerminated$Term , levels = rev(unique(sig_LFC_hyp_vs_ungerminated$Term )))
+
+# plot LFC
+# use "GO.ID" if GO "Term" is not unique
+
+# Create the plot
+p <- ggplot(sig_LFC_hyp_vs_ungerminated, aes(x = logFC, y = Term, fill = as.numeric(weight_fisher_hyp_vs_ungerminated))) +
+  geom_violin() + 
+  theme_bw() + 
+  geom_vline(xintercept = 0, colour = "grey") +
+  scale_fill_gradient(low = "red", high = "white")
+
+# Define the output directory and filename
+output_dir <- "go_plots"
+output_file <- file.path(output_dir, "hyp_vs_ungerminated_violin_plot.png")
+
+# Create the output directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# Save the plot
+ggsave(filename = output_file, plot = p, width = 10, height = 8, dpi = 300)
+
+
+################################ Finally do the GO enrichment for Pustule Pst against Ungerminated Pst spores #######################
+
+
+gene_to_go_mapping <- readMappings(file = "pst7.csv", sep = ";", IDsep = ",")
+
+# get background gene list
+# using dataframe "pst_underattackbypenx_filtered_vs_day12.csv" with two columns, gene name and LFC value
+
+day12_vs_ungerminated <-  read.csv("./penx_removed_against_its_genome_limma_outputs/pst_day12_vs_ungerminated.csv", header = TRUE)
+geneNames_day12_vs_ungerminated <- day12_vs_ungerminated$Column1
+
+
+# select genes of interest
+# Basically this is subsetting down genes based on whether they are significantly upregulated, maybe go higher than 1 LFC but lets see
+myInterestingGenes_day12_vs_ungerminated <- subset(day12_vs_ungerminated, adj.P.Val < 0.05 & logFC > 1)$Column1
+
+# create selection and gene list object
+geneList_day12_vs_ungerminated <- factor(as.integer(geneNames_day12_vs_ungerminated %in% myInterestingGenes_day12_vs_ungerminated)) 
+names(geneList_day12_vs_ungerminated) <- geneNames_day12_vs_ungerminated
+str(geneList_day12_vs_ungerminated)
+
+# create topgo object
+my_go_data_day12_vs_ungerminated <- new("topGOdata",
+                               ontology    = "BP",
+                               allGenes    = geneList_day12_vs_ungerminated,
+                               annot       = annFUN.gene2GO,
+                               gene2GO     = gene_to_go_mapping,
+                               nodeSize    = 5) # nodesize is min number of genes in GO_term
+
+## Enrichment Tests
+# use fisher for gene set number enrichment (not using gene values)
+result_weight_fisher_day12_vs_ungerminated <- runTest(object = my_go_data_day12_vs_ungerminated, algorithm = "weight01", statistic = "fisher") # result object
+
+# summarise results
+result_weight_output_day12_vs_ungerminated <- GenTable(object = my_go_data_day12_vs_ungerminated, weight_fisher_day12_vs_ungerminated = result_weight_fisher_day12_vs_ungerminated,
+                                              orderBy   = "weight_fisher_day12_vs_ungerminated",
+                                              topNodes  = length(score(result_weight_fisher_day12_vs_ungerminated)))
+
+# multiple testing correction (may not be necessary)
+result_weight_output_day12_vs_ungerminated$weight_fisher_adjusted_day12_vs_ungerminated <- p.adjust(p = result_weight_output_day12_vs_ungerminated$weight_fisher_day12_vs_ungerminated, method = c("BH")) 
+
+# P-value distribution from Fisher test
+ggplot(result_weight_output_day12_vs_ungerminated, aes(x = as.numeric(weight_fisher_day12_vs_ungerminated))) + geom_histogram()
+
+# Create map of sig GO terms
+# Define output directory and file path
+output_dir <- "go_plots"
+output_file <- file.path(output_dir, "topGO_sig_nodes_day12_vs_ungerminated.png")
+
+# Create the directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# Save the base R plot using png()
+png(filename = output_file, width = 1200, height = 1000, res = 300)  # adjust size and resolution as needed
+
+# Plot with adjusted text size
+par(cex = 0.22)  # change font size
+showSigOfNodes(
+  my_go_data_day12_vs_ungerminated,
+  score(result_weight_fisher_day12_vs_ungerminated),
+  firstSigNodes = 5,
+  useInfo = 'def',
+  .NO.CHAR = 50
+)
+
+# Finish plotting to file
+dev.off()
+# Genes in GO term stored in topGO object
+GO_mapped_day12_vs_ungerminated <- genesInTerm(my_go_data_day12_vs_ungerminated) 
+
+
+## Plotting genes in sig GO terms
+# get sig GO terms
+
+sig_terms_day12_vs_ungerminated <- result_weight_output_day12_vs_ungerminated[as.numeric(result_weight_output_day12_vs_ungerminated$weight_fisher_day12_vs_ungerminated) < 0.05,] # or fisher adjusted values
+
+
+# Code to generate a dotplot of enriched GO terms, with Gene Ratio (meaning number of significant genes within an individual GO term) as the x axis and GO term as the y axis. The dot size is relative to the total number of significant genes in the term and its colour
+# reflects the significance of the term overall (Fisher test)
+theme_update(text = element_text(size=18))
+
+p <- ggplot(sig_terms_day12_vs_ungerminated, aes(x = Significant / Annotated, y = reorder(Term, Significant / Annotated))) +
+  geom_point(aes(size = Significant, color = weight_fisher_adjusted_day12_vs_ungerminated), binaxis = "y") +
+  xlim(0, 1.0) +
+  labs(
+    y = "GO term",
+    x = "Gene ratio",
+    size = "# Significant Genes",
+    colour = "Significance"
+  ) +
+  ggtitle("Day 12 vs Ungerminated Pst") +
+  theme(axis.text = element_text(size = 8))
+
+# Define output directory and file path
+output_dir <- "go_plots"
+output_file <- file.path(output_dir, "day12_vs_ungerminated_jacks_ratio_plot.png")
+
+# Create directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# Save the plot
+ggsave(filename = output_file, plot = p, width = 10, height = 8, dpi = 300)
+
+# get genes in sig go terms
+
+sig_genes_day12_vs_ungerminated <- data.frame()
+for(go_term in sig_terms_day12_vs_ungerminated$GO.ID){
+  sig_gene_day12_vs_ungerminated <- data.frame(gene = GO_mapped_day12_vs_ungerminated[go_term], GO.ID = go_term)
+  names(sig_gene_day12_vs_ungerminated)[1] <- "Column1"
+  sig_genes_day12_vs_ungerminated <- rbind(sig_genes_day12_vs_ungerminated, sig_gene_day12_vs_ungerminated)
+}
+
+sig_terms_genes_day12_vs_ungerminated <- right_join(sig_terms_day12_vs_ungerminated, sig_genes_day12_vs_ungerminated, by = "GO.ID") # merge genes with result object above
+
+# associate LFC with sig genes
+sig_LFC_day12_vs_ungerminated <- right_join(day12_vs_ungerminated, sig_terms_genes_day12_vs_ungerminated, by = "Column1")
+
+# order by most sig GO term
+sig_LFC_day12_vs_ungerminated <- sig_LFC_day12_vs_ungerminated[order(as.numeric(sig_LFC_day12_vs_ungerminated$weight_fisher_day12_vs_ungerminated)),]
+sig_LFC_day12_vs_ungerminated$Term <- factor(sig_LFC_day12_vs_ungerminated$Term , levels = rev(unique(sig_LFC_day12_vs_ungerminated$Term )))
+
+# plot LFC
+# use "GO.ID" if GO "Term" is not unique
+
+# Create the plot
+p <- ggplot(sig_LFC_day12_vs_ungerminated, aes(x = logFC, y = Term, fill = as.numeric(weight_fisher_day12_vs_ungerminated))) +
+  geom_violin() + 
+  theme_bw() + 
+  geom_vline(xintercept = 0, colour = "grey") +
+  scale_fill_gradient(low = "red", high = "white")
+
+# Define the output directory and filename
+output_dir <- "go_plots"
+output_file <- file.path(output_dir, "Day12_vs_ungerminated_violin_plot.png")
+
+# Create the output directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# Save the plot
+ggsave(filename = output_file, plot = p, width = 10, height = 8, dpi = 300)
